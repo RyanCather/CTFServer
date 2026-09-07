@@ -1,11 +1,29 @@
 #include <PowerFunctions.h>   // Power Functions Library
-#include <CyberCitySharedFunctionality.h>     // Custom library for shared project functionality
 #include <Arduino.h>                          // Core Arduino functions
+#include <Adafruit_GFX.h>                     // Core graphics library
+#include <Adafruit_ST7789.h>                 // Hardware-specific library for ST7789 display
 
 // -------------------------------------------------------------------
 // MODE SWITCH: Set to true for offline IR testing. Set to false for WiFi/MQTT.
-#define DEBUG_MODE false
+#define DEBUG_MODE true
 // -------------------------------------------------------------------
+
+// Pin definitions for Adafruit ESP32-S3 Reverse TFT Feather
+#ifndef TFT_BACKLIGHT
+  #define TFT_BACKLIGHT  45
+#endif
+#ifndef TFT_I2C_POWER  
+  #define TFT_I2C_POWER  21
+#endif
+#ifndef TFT_CS
+  #define TFT_CS         42
+#endif
+#ifndef TFT_DC
+  #define TFT_DC         40
+#endif
+#ifndef TFT_RST
+  #define TFT_RST        41
+#endif
 
 #if !DEBUG_MODE
   #include <WiFi.h>                             // WiFi connectivity library
@@ -15,6 +33,9 @@
   PubSubClient client(espClient);   
 #endif
 
+// Declaration of ST7789 display for ESP32-S3 Reverse TFT Feather
+Adafruit_ST7789 display = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
+
 // IR Channels
 #define CH1 0x0
 #define CH2 0x1
@@ -22,13 +43,12 @@
 #define CH4 0x3
 
 // IR Transmission Pin for Adafruit High Power IR Emitter Breakout (Adafruit #5639)
-#define IR_TRANS_IN   21  
+#define IR_TRANS_IN   13  
 #define IR_DEBUG_OFF  0  
 #define IR_DEBUG_ON   1  
 
 // Call PowerFunctions parameters
 PowerFunctions pf(IR_TRANS_IN, CH1, IR_DEBUG_ON);
-CyberCitySharedFunctionality cyberCity;       // Instance of shared functionality class
 
 // Timers for non-blocking execution
 unsigned long lastDebugTime = 0;
@@ -42,49 +62,6 @@ String lastDisplayedSpeed = "";
 void step(uint8_t output, uint8_t pwm, uint16_t time) {
   pf.combo_pwm(output, pwm);
   pf.single_pwm(output, pwm);
-}
-
-
-// Updated display function that shows both Status and Transmitted Speed
-void updateDisplay(String status, String speedText, String details = "") {
-  if (status != lastDisplayedStatus || speedText != lastDisplayedSpeed) {
-    display.clearBuffer();
-    display.setTextColor(EPD_BLACK);
-    
-    // Header
-    display.setTextSize(2);
-    display.setCursor(10, 10);
-    display.println("TRAIN STATUS:");
-    
-    // Current Status
-    display.setTextSize(2);
-    display.setCursor(10, 35);
-    display.println(status);
-    
-    // Transmitted Speed
-    display.setTextSize(2);
-    display.setCursor(10, 60);
-    display.print("SPD: ");
-    display.println(speedText);
-    
-    // Details
-    if (details != "") {
-      display.setTextSize(1);
-      display.setCursor(10, 90);
-      display.println(details);
-    }
-    
-    // Timestamp
-    display.setTextSize(1);
-    display.setCursor(10, 110);
-    display.println("Time: " + String(millis() / 1000) + "s");
-    
-    display.display();
-    lastDisplayedStatus = status;
-    lastDisplayedSpeed = speedText;
-    
-    Serial.println("Display Updated - Status: " + status + " | Speed: " + speedText);
-  }
 }
 
 #if !DEBUG_MODE
@@ -139,6 +116,50 @@ void callback(char* topic, byte* payload, unsigned int length) {
 }
 #endif
 
+// Display update function for ST7789 TFT Color Display
+void updateDisplay(String status, String speedText, String details = "") {
+  if (status != lastDisplayedStatus || speedText != lastDisplayedSpeed) {
+    display.fillScreen(ST77XX_BLACK);
+    
+    // Header
+    display.setTextSize(2);
+    display.setTextColor(ST77XX_WHITE);
+    display.setCursor(10, 10);
+    display.println("TRAIN STATUS:");
+    
+    // Current Status
+    display.setTextSize(2);
+    display.setTextColor(ST77XX_GREEN);
+    display.setCursor(10, 35);
+    display.println(status);
+    
+    // Transmitted Speed
+    display.setTextSize(2);
+    display.setTextColor(ST77XX_YELLOW);
+    display.setCursor(10, 60);
+    display.print("SPD: ");
+    display.println(speedText);
+    
+    // Details
+    if (details != "") {
+      display.setTextSize(1);
+      display.setTextColor(ST77XX_WHITE);
+      display.setCursor(10, 90);
+      display.println(details);
+    }
+    
+    // Timestamp
+    display.setTextSize(1);
+    display.setTextColor(ST77XX_WHITE);
+    display.setCursor(10, 110);
+    display.println("Time: " + String(millis() / 1000) + "s");
+    
+    lastDisplayedStatus = status;
+    lastDisplayedSpeed = speedText;
+    
+    Serial.println("Display Updated - Status: " + status + " | Speed: " + speedText);
+  }
+}
 
 // Debug function to step through FWD 1-7, STOP, REV 1-7, STOP
 void debugIRTransmission() {
@@ -152,11 +173,6 @@ void debugIRTransmission() {
     String speedStr = "";
     uint8_t selectedPWM = PWM_BRK;
 
-    // Cycle sequence: 
-    // Steps 0 to 6: FWD 1..7
-    // Step 7: STOP
-    // Steps 8 to 14: REV 1..7
-    // Step 15: STOP
     switch (debugStep) {
       case 0:  speedStr = "FWD Speed 1"; selectedPWM = PWM_FWD1; currentStatus = "TEST: FWD"; break;
       case 1:  speedStr = "FWD Speed 2"; selectedPWM = PWM_FWD2; currentStatus = "TEST: FWD"; break;
@@ -182,32 +198,32 @@ void debugIRTransmission() {
     Serial.println("--- [IR DEBUG TX] ---");
     Serial.println("Transmitting Speed: " + speedStr);
 
-    // 1. Update Display with the speed being transmitted
     updateDisplay(currentStatus, speedStr, "DEBUG MODE (16-Step)");
-
-    // 2. Transmit IR Command via PowerFunctions
     step(RED, selectedPWM, 0);
 
-    // Advance to next test step (0 to 15)
     debugStep = (debugStep + 1) % 16;
   }
 }
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial) {
-    delay(10);
-  }
   delay(1000);
+
+  // Power on ESP32-S3 Reverse TFT display power & backlight pins
+  pinMode(TFT_I2C_POWER, OUTPUT);
+  digitalWrite(TFT_I2C_POWER, HIGH);
+  pinMode(TFT_BACKLIGHT, OUTPUT);
+  digitalWrite(TFT_BACKLIGHT, HIGH);
+
+  // Initialize integrated 1.14" ST7789 display
+  // Rotation set to 1 for correct landscape alignment on Reverse TFT
+  display.init(135, 240);
+  display.setRotation(1);
+  display.fillScreen(ST77XX_BLACK);
 
   // Pin mode for IR Emitter
   pinMode(IR_TRANS_IN, OUTPUT);
   digitalWrite(IR_TRANS_IN, LOW);
-
-  // Initialize display settings
-  display.begin(THINKINK_MONO);
-  display.clearBuffer();
-  display.setTextWrap(false);
 
 #if DEBUG_MODE
   Serial.println("=== RUNNING IN DEBUG MODE (No WiFi / No MQTT) ===");
@@ -233,8 +249,8 @@ void setup() {
 
 void loop() {
 #if DEBUG_MODE
-  debugIRTransmission();    // Exclusively run IR test and display updates
+  debugIRTransmission();
 #else
-  mqttLoop();               // Process MQTT network messages in production mode
+  mqttLoop();
 #endif
 }
